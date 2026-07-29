@@ -1,7 +1,7 @@
 Package: stLMM
 Type: Package
 Title: Bayesian Spatial and Space-Time Linear Mixed Models
-Version: 0.0.2
+Version: 0.0.3
 Authors@R: c(
     person("Andrew O.", "Finley", role = c("aut", "cre"),
            email = "finleya@msu.edu"),
@@ -28,8 +28,9 @@ LinkingTo: BayesLogit (>= 2.4), Matrix (>= 1.7-0)
 Suggests: ggplot2, knitr, loo, quarto, sf, testthat (>= 3.0.0)
 VignetteBuilder: quarto
 Config/testthat/edition: 3
-Config/Needs/website: dplyr, lme4, nimble, patchwork, spdep, tidyr
+Config/Needs/website: dplyr, kableExtra, lme4, lwgeom, nimble,
+        patchwork, RhpcBLASctl, spdep, tidyr, tidyverse
 NeedsCompilation: yes
-Packaged: 2026-07-19 13:59:19 UTC; andy
+Packaged: 2026-07-29 14:52:51 UTC; andy
 Repository: CRAN
-Date/Publication: 2026-07-28 16:30:03 UTC
+Date/Publication: 2026-07-29 22:10:02 UTC

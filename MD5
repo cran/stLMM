@@ -1,4 +1,4 @@
-08faca16eb28a9821e406548e54cb809 *DESCRIPTION
+a2a6221bcfd731fe45d19687399e7d0a *DESCRIPTION
 d5df978e5ed91779dfcd20a50a1d32ea *NAMESPACE
 f412536e4949a4f3431cd1445df071a3 *R/as_mcmc.R
 4350912c0b173dc19abdeeab49ef8291 *R/as_samples.R
@@ -17,7 +17,7 @@ dbe126d0628a40cd76055d0343c71495 *R/recover.R
 a1070bff7f48c024d15ed8fb7ebc152d *R/residuals.R
 473992648f332ce3fc8bacd46ad67d5a *R/stLMM.R
 a5c2ea913ce119dcb1a54c243b6d24a6 *R/terms.R
-955e2970ccea6b4481f56c84bba562db *README.md
+8481c3c64520b5efee8f36d3ad69f1f4 *README.md
 21c9401b8c07f38d762ade4612fc4ffe *build/partial.rdb
 d1172645a606efb33a36997203588988 *build/vignette.rds
 0c8e700cf8f2bb5a5dfa68ba5ea9af0d *data/stunitco.rda
@@ -26,7 +26,7 @@ d1172645a606efb33a36997203588988 *build/vignette.rds
 e4875211530749ec0bb262cc4d2cccbd *inst/doc/v01-getting-started.html
 86483ccfb11c2f797186e41261c514b4 *inst/doc/v01-getting-started.qmd
 53fdb1595e12b889d695d240344d1260 *inst/doc/v02-spatial-nngp.R
-fe870db52fb8692757bf914bc9d70485 *inst/doc/v02-spatial-nngp.html
+80c5e849ebf00159df2dea86ee183a63 *inst/doc/v02-spatial-nngp.html
 3046bdadd1883c00ad98876b1423ae83 *inst/doc/v02-spatial-nngp.qmd
 98238e4bc0eedd8de7cd74479c9e4081 *inst/extdata/stunitco.gpkg
 4244c552aaf6b3a88389596eaa1c893a *man/as_mcmc.Rd
@@ -52,12 +52,12 @@ c5497d83ef49576e368f699896804b95 *src/corModels.h
 02c2bc1351ad4054f5910bb3c8477ff6 *src/nn.cpp
 a222da35c38c7f158cdaf97b482552e2 *src/nn.h
 ec8491c293f67d91e8aef081525b5a1c *src/stLMM_common.cpp
-14d642fc88eb8ff6892719c7ea87b3b3 *src/stLMM_covariance.cpp
-9d6ff3c8f897b924a82dc4a442c52b67 *src/stLMM_internal.h
+c3dbae3c95f1bdda76fc8f6b93824a19 *src/stLMM_covariance.cpp
+1fdeb21f0b8a46219db09d2c243bf717 *src/stLMM_internal.h
 156ccaf5f71d9f6a7bdbad5d4c870d7c *src/stLMM_precision.cpp
-62ae3cde48df53e5e98e4a12bda113b4 *src/stLMM_predict.cpp
+7ec5a13f2ba7e7c7fadaec477ad2544d *src/stLMM_predict.cpp
 a416362948ece56f6c05ed39a2c24e24 *src/stLMM_recover.cpp
-36cb68a7858ba3de832a0cf21d643fe7 *src/stLMM_sampler.cpp
+289da1b8e04e16d5e411d8753af9c30f *src/stLMM_sampler.cpp
 cdc20622b7323ca30299c50ee0ad3fae *src/stLMM_state.cpp
 faab644decb591e9914497083ba717e5 *src/utils.cpp
 58c96f3d4af3b96a888edfa3d50f8a02 *src/utils.h
