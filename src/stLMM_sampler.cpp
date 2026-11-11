@@ -1,6 +1,7 @@
 #include "stLMM_internal.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include <BayesLogit.h>
 
@@ -173,6 +174,88 @@ int is_pg_likelihood(const SamplerState *s)
          s->likelihoodFamily == LIKELIHOOD_NEGATIVE_BINOMIAL;
 }
 
+int is_probit_likelihood(const SamplerState *s)
+{
+  return s->likelihoodFamily == LIKELIHOOD_PROBIT;
+}
+
+int is_augmented_likelihood(const SamplerState *s)
+{
+  return is_pg_likelihood(s) || is_probit_likelihood(s);
+}
+
+static double rstdnorm_lower_trunc(double lower)
+{
+  double x, alpha, u, logu;
+
+  if(!R_FINITE(lower))
+    Rf_error("non-finite probit truncation point");
+
+  if(lower <= 0.0){
+    do {
+      x = rnorm(0.0, 1.0);
+    } while(x < lower);
+    return x;
+  }
+
+  alpha = 0.5 * (lower + std::sqrt(lower * lower + 4.0));
+  for(;;){
+    u = runif(0.0, 1.0);
+    if(u <= 0.0)
+      continue;
+    x = lower - std::log(u) / alpha;
+    logu = std::log(runif(0.0, 1.0));
+    if(logu <= -0.5 * (x - alpha) * (x - alpha))
+      return x;
+  }
+}
+
+static double rnorm_probit_latent(double mean, int y)
+{
+  double lower;
+
+  if(!R_FINITE(mean))
+    Rf_error("non-finite probit linear predictor");
+
+  lower = -mean;
+  if(y)
+    return mean + rstdnorm_lower_trunc(lower);
+
+  return mean - rstdnorm_lower_trunc(-lower);
+}
+
+void update_probit_working_model(SamplerState *s,
+                                 const double *beta,
+                                 const double *alpha,
+                                 const double *w)
+{
+  int i, y;
+  double obsOffset, latentFull;
+
+  if(!is_probit_likelihood(s))
+    return;
+
+  /*
+    Albert-Chib augmentation:
+
+      y_i = 1(z_i > 0),  z_i = offset_i + eta_i + e_i, e_i ~ N(0, 1).
+
+    The collapsed Gaussian sampler works on eta_i without the offset, so the
+    mutable response below stores z_i - offset_i and unit observation precision.
+  */
+  update_linear_predictor(s, beta, alpha, w, s->nWork2);
+
+  for(i = 0; i < s->n; i++){
+    obsOffset = (s->offset != NULL) ? s->offset[i] : 0.0;
+    y = s->yObserved[i] > 0.0 ? 1 : 0;
+    latentFull = rnorm_probit_latent(s->nWork2[i] + obsOffset, y);
+    s->y[i] = latentFull - obsOffset;
+    s->obsPrecision[i] = 1.0;
+  }
+
+  refactor_current_M(s, "update_probit_working_model");
+}
+
 void update_pg_working_model(SamplerState *s,
                              BayesLogit_rpg_hybrid_t pg,
                              const double *beta,
@@ -290,8 +373,8 @@ double log_cov_params_target_collapsed(SamplerState *s, const double *resid)
   out = compute_logDetV(s);
   out = -0.5 * (out + quadform_Vinv(s, resid));
 
-  if(is_pg_likelihood(s)){
-    /* No tau_sq term: PG observation precision is the current omega. */
+  if(is_augmented_likelihood(s)){
+    /* No tau_sq term: augmented likelihoods own their observation precision. */
   } else if(s->residualModel == 0 && s->tauTune > 0.0){
     out += log_prior_kernel_original(s->tauSq, s->tauSqPrior)
          + std::log(s->tauSq);
@@ -339,8 +422,8 @@ int log_cov_params_target_collapsed_try(SamplerState *s, const double *resid, do
 
   *out = -0.5 * (logdetV + quadform_Vinv(s, resid));
 
-  if(is_pg_likelihood(s)){
-    /* No tau_sq term: PG observation precision is the current omega. */
+  if(is_augmented_likelihood(s)){
+    /* No tau_sq term: augmented likelihoods own their observation precision. */
   } else if(s->residualModel == 0 && s->tauTune > 0.0){
     *out += log_prior_kernel_original(s->tauSq, s->tauSqPrior)
           + std::log(s->tauSq);
@@ -926,6 +1009,8 @@ void run_covariance_warmup(SamplerState *s,
 
       if(is_pg_likelihood(s))
         update_pg_working_model(s, pg, betaCurrent, alphaCurrent, wCurrent);
+      else if(is_probit_likelihood(s))
+        update_probit_working_model(s, betaCurrent, alphaCurrent, wCurrent);
 
       if(s->p > 0)
         update_beta_draw_collapsed(s, alphaCurrent, betaCurrent);
@@ -950,7 +1035,7 @@ void run_covariance_warmup(SamplerState *s,
       p->warmupNAccepted += accepted;
       p->warmupNAttempted += p->nBlocks;
 
-      if(is_pg_likelihood(s) && s->qLatTotal > 0){
+      if(is_augmented_likelihood(s) && s->qLatTotal > 0){
         update_resid_for_current_fixed_random(s, betaCurrent, alphaCurrent, resid);
         recover_w_draw_collapsed(s, resid, wCurrent);
       }
@@ -1460,8 +1545,13 @@ extern "C" {
   
   SEXP stLMM_collapsed_sampler(SEXP backend_r)
   {
+    // Read the monotonic wall clock only at phase boundaries. No timer enters
+    // an MCMC update or changes the random-number stream.
+    typedef std::chrono::steady_clock SamplerClock;
+    const SamplerClock::time_point initialization_start = SamplerClock::now();
     SamplerState s;
     SEXP out, outNames, term_description_r;
+    SEXP phase_seconds_r, phase_names_r;
     SEXP beta_samples_r, alpha_samples_r, tau_samples_r, residual_variance_samples_r, sigma_re_samples_r, theta_samples_r, process_sigma_samples_r;
     SEXP term_labels_r, theta_accept_r, covariance_acceptance_r, w_samples_r, recover_iter_r, adaptive_metropolis_r;
     double *betaSamples, *alphaSamples, *tauSamples, *residualVarianceSamples, *sigmaSqRESamples, *thetaSamples, *processSigmaSamples;
@@ -1544,7 +1634,7 @@ extern "C" {
     for(i = 0; i < (s.nRecover > 0 ? s.nRecover : 1); i++) recoverIter[i] = 0;
     
     for(i = 0; i < s.p; i++) betaCurrent[i] = 0.0;
-    if(is_pg_likelihood(&s)){
+    if(is_augmented_likelihood(&s)){
       SEXP beta_start_r = getListElement(backend_r, "beta_starting");
       if(beta_start_r != R_NilValue){
         if(TYPEOF(beta_start_r) != REALSXP || LENGTH(beta_start_r) != s.p)
@@ -1563,8 +1653,10 @@ extern "C" {
     }
     
     GetRNGstate();
+    const SamplerClock::time_point warmup_start = SamplerClock::now();
     run_covariance_warmup(&s, betaCurrent, alphaCurrent, resid, wCurrent, pg, doVerbose, nReport);
 
+    const SamplerClock::time_point sampling_start = SamplerClock::now();
     for(iter = 0; iter < s.nSamples; iter++){
       R_CheckUserInterrupt();
       /*
@@ -1578,6 +1670,8 @@ extern "C" {
       vmax_iter = vmaxget();
       if(is_pg_likelihood(&s))
         update_pg_working_model(&s, pg, betaCurrent, alphaCurrent, wCurrent);
+      else if(is_probit_likelihood(&s))
+        update_probit_working_model(&s, betaCurrent, alphaCurrent, wCurrent);
 
       if(s.p > 0)
 	update_beta_draw_collapsed(&s, alphaCurrent, betaCurrent);
@@ -1600,7 +1694,7 @@ extern "C" {
       }
 
       wCurrentFresh = 0;
-      if(is_pg_likelihood(&s) && s.qLatTotal > 0){
+      if(is_augmented_likelihood(&s) && s.qLatTotal > 0){
         update_resid_for_current_fixed_random(&s, betaCurrent, alphaCurrent, resid);
         recover_w_draw_collapsed(&s, resid, wCurrent);
         wCurrentFresh = 1;
@@ -1636,8 +1730,8 @@ extern "C" {
       iter1 = iter + 1;
       if(should_recover_iteration(&s, iter1)){
         /*
-          Binomial fits need a fresh latent-process draw each iteration for
-          the next Polya-Gamma augmentation. On recovery iterations, reuse
+          Augmented non-Gaussian fits need a fresh latent-process draw each
+          iteration for the next latent-data update. On recovery iterations, reuse
           that draw instead of drawing another iid conditional sample only
           to store it.
         */
@@ -1655,6 +1749,7 @@ extern "C" {
       }
       vmaxset(vmax_iter);
     }
+    const SamplerClock::time_point sampling_end = SamplerClock::now();
     if(recoverIdx != s.nRecover)
       Rf_error("internal error: recovered sample count mismatch");
     PutRNGstate();
@@ -1664,8 +1759,8 @@ extern "C" {
     UNPROTECT(1);
     PROTECT(term_description_r = build_term_description_object(&s, backend_r, s.nSamples));
     
-    PROTECT(out = Rf_allocVector(VECSXP, 14));
-    PROTECT(outNames = Rf_allocVector(STRSXP, 14));
+    PROTECT(out = Rf_allocVector(VECSXP, 15));
+    PROTECT(outNames = Rf_allocVector(STRSXP, 15));
     PROTECT(beta_samples_r = Rf_allocMatrix(REALSXP, s.nSamples, s.p > 0 ? s.p : 0));
     PROTECT(alpha_samples_r = Rf_allocMatrix(REALSXP, s.nSamples, s.q > 0 ? s.q : 0));
     PROTECT(sigma_re_samples_r = Rf_allocMatrix(REALSXP, s.nSamples, s.nRE > 0 ? s.nRE : 0));
@@ -1679,6 +1774,15 @@ extern "C" {
     PROTECT(w_samples_r = Rf_allocMatrix(REALSXP, s.nRecover, s.qLatTotal > 0 ? s.qLatTotal : 0));
     PROTECT(recover_iter_r = Rf_allocVector(INTSXP, s.nRecover));
     PROTECT(adaptive_metropolis_r = build_adaptive_metropolis_object(&s));
+    PROTECT(phase_seconds_r = Rf_allocVector(REALSXP, 3));
+    PROTECT(phase_names_r = Rf_allocVector(STRSXP, 3));
+    REAL(phase_seconds_r)[0] = std::chrono::duration<double>(warmup_start - initialization_start).count();
+    REAL(phase_seconds_r)[1] = std::chrono::duration<double>(sampling_start - warmup_start).count();
+    REAL(phase_seconds_r)[2] = std::chrono::duration<double>(sampling_end - sampling_start).count();
+    SET_STRING_ELT(phase_names_r, 0, Rf_mkChar("initialization"));
+    SET_STRING_ELT(phase_names_r, 1, Rf_mkChar("warmup"));
+    SET_STRING_ELT(phase_names_r, 2, Rf_mkChar("sampling"));
+    Rf_namesgets(phase_seconds_r, phase_names_r);
     
     for(i = 0; i < s.nSamples * s.p; i++) REAL(beta_samples_r)[i] = betaSamples[i];
     for(i = 0; i < s.nSamples * s.q; i++) REAL(alpha_samples_r)[i] = alphaSamples[i];
@@ -1707,6 +1811,7 @@ extern "C" {
     SET_VECTOR_ELT(out, 11, w_samples_r);
     SET_VECTOR_ELT(out, 12, recover_iter_r);
     SET_VECTOR_ELT(out, 13, adaptive_metropolis_r);
+    SET_VECTOR_ELT(out, 14, phase_seconds_r);
     
     SET_STRING_ELT(outNames, 0, Rf_mkChar("beta_samples"));
     SET_STRING_ELT(outNames, 1, Rf_mkChar("alpha_samples"));
@@ -1722,9 +1827,10 @@ extern "C" {
     SET_STRING_ELT(outNames, 11, Rf_mkChar("w_samples"));
     SET_STRING_ELT(outNames, 12, Rf_mkChar("recover_iter"));
     SET_STRING_ELT(outNames, 13, Rf_mkChar("adaptive_metropolis"));
+    SET_STRING_ELT(outNames, 14, Rf_mkChar("phase_seconds"));
     Rf_namesgets(out, outNames);
     
-    UNPROTECT(16);
+    UNPROTECT(18);
     free_sampler_state(&s);
     return out;
   }

@@ -14,22 +14,22 @@
   thin = 1L), scale = c("response", "link"), ...)
 
 \method{predict}{stLMM_recovery}(object, newdata = NULL, y_samples = FALSE,
-  joint = FALSE, joint_method = c("full", "vecchia"), pred_m = NULL,
+  joint = FALSE, joint_method = c("vecchia", "full"), pred_m = NULL,
   pred_ordering = "maxmin", st_scale = NULL,
   return_w_samples = TRUE, n_omp_threads = NULL, verbose = FALSE,
   sub_sample = list(start = 1L, thin = 1L), scale = c("response", "link"),
   ...)
 
 \method{predict}{stLMM_recovery_chains}(object, newdata = NULL,
-  y_samples = FALSE, joint = FALSE, joint_method = c("full", "vecchia"),
+  y_samples = FALSE, joint = FALSE, joint_method = c("vecchia", "full"),
   pred_m = NULL, pred_ordering = "maxmin", st_scale = NULL,
   return_w_samples = TRUE, n_omp_threads = NULL, verbose = FALSE,
   sub_sample = list(start = 1L, thin = 1L), scale = c("response", "link"),
   ...)
 }
 \arguments{
-\item{object}{An \code{stLMM} fit without structured process terms, a
-Polya-Gamma process fit with saved in-chain process draws, a recovered object
+\item{object}{An \code{stLMM} fit without structured process terms, an
+augmented non-Gaussian process fit with saved in-chain process draws, a recovered object
 returned by \code{recover()}, or the corresponding multi-chain object.}
 \item{newdata}{Optional data frame. Grouped random-effect levels must already
 exist in the fitted model support. For recovered process models, process
@@ -39,7 +39,7 @@ must also use fitted time values.}
 \item{y_samples}{Logical; if \code{TRUE}, also simulate observation-level
 posterior predictive samples. Gaussian fits use the fitted residual variance.
 Binomial fits draw counts from the fitted probabilities and prediction trial
-counts.}
+counts. Probit fits draw binary responses from the fitted probabilities.}
 \item{joint}{Logical; for new GP or NNGP nodes, whether to draw unique new
 nodes with cross-location dependence. The default \code{FALSE} simulates
 unique new nodes independently conditional on the fitted support or
@@ -47,13 +47,15 @@ fitted-support neighbors and is recommended when only marginal prediction
 summaries are needed. For dense \code{gp()} terms, \code{joint = TRUE} uses
 the exact dense GP conditional covariance among unique new nodes.}
 \item{joint_method}{Method used for NNGP terms when \code{joint = TRUE}.
-\code{"full"} keeps the historical behavior: fitted-support neighbors are
-used for each new node and the new-node residual covariance is drawn from a
-dense matrix. \code{"vecchia"} orders the unique new prediction nodes and
-simulates them sequentially from a Vecchia/NNGP-style history containing all
-fitted support nodes plus previously simulated prediction nodes. Dense
-\code{gp()} terms ignore \code{joint_method} and use exact joint Gaussian
-conditioning when \code{joint = TRUE}.}
+\code{"vecchia"} is the default and orders the unique new prediction nodes,
+then simulates them sequentially from a Vecchia/NNGP-style history containing
+all fitted support nodes plus previously simulated prediction nodes. This is
+usually more efficient for moderate and large prediction sets. \code{"full"}
+keeps the historical dense behavior: fitted-support neighbors are used for
+each new node and the new-node residual covariance is drawn from a dense
+matrix. This can be useful for small prediction sets. Dense \code{gp()} terms
+ignore \code{joint_method} and use exact joint Gaussian conditioning when
+\code{joint = TRUE}.}
 \item{pred_m}{Optional positive integer neighbor count for
 \code{joint_method = "vecchia"}. The default \code{NULL} uses the fitted
 NNGP term's \code{m}. The first prediction nodes always have the fitted support
@@ -91,11 +93,14 @@ messages. Progress is reported from R before and after major prediction phases
 rather than from individual OpenMP worker threads.}
 \item{sub_sample}{A list with optional integer entries \code{start} and
 \code{thin}. For \code{predict.stLMM()} without process terms, these select
-posterior draw indices. For Polya-Gamma process fits with saved process draws,
+posterior draw indices. For augmented non-Gaussian process fits with saved process draws,
 and for \code{predict.stLMM_recovery()}, these select saved or recovered draw
 indices through \code{object$recover_iter}.}
 \item{scale}{For \code{family = "binomial"}, return fitted probabilities on
 the \code{"response"} scale or the linear predictor on the \code{"link"} scale.
+For \code{family = "probit"}, return fitted probabilities on the
+\code{"response"} scale or the probit linear predictor on the \code{"link"}
+scale.
 For \code{family = "negative_binomial"}, return fitted mean counts on the
 \code{"response"} scale or the log mean on the \code{"link"} scale. For
 Gaussian models these scales are identical.}
@@ -103,7 +108,7 @@ Gaussian models these scales are identical.}
 }
 \description{
 Returns posterior samples for the mean response at fitted rows or at
-\code{newdata} rows. For binomial models, the default mean response is the
+\code{newdata} rows. For binomial and probit models, the default mean response is the
 posterior fitted probability. For negative-binomial models, the default mean
 response is the posterior fitted mean count.
 }
@@ -142,6 +147,11 @@ binomial counts. With \code{newdata = NULL}, the fitted trial counts are used.
 With \code{newdata}, a column named \code{trials} is used when present;
 otherwise prediction defaults to one trial per row.
 
+For \code{family = "probit"}, prediction first constructs posterior samples
+of the linear predictor and then applies the standard-normal cdf when
+\code{scale = "response"}. If \code{y_samples = TRUE}, prediction simulates
+binary responses with those fitted probabilities.
+
 For \code{family = "negative_binomial"}, prediction first constructs posterior
 samples of the log mean and then exponentiates them when
 \code{scale = "response"}. If \code{y_samples = TRUE}, prediction simulates
@@ -158,24 +168,25 @@ For NNGP terms, \code{joint = FALSE} uses the independent new-node prediction
 approach based on nearest fitted-support neighbors, following the conditional
 NNGP prediction machinery described by Finley et al. (2019). Each unique new
 node is simulated independently conditional on its fitted-support neighbors.
+
+With the default \code{joint = TRUE, joint_method = "vecchia"}, unique new
+NNGP nodes are ordered by \code{pred_ordering}. Neighbors for each ordered
+prediction node are chosen from the combined history made of all fitted
+support nodes and earlier prediction nodes in that ordering. The prediction
+draw is then generated sequentially, so simulated earlier prediction nodes can
+enter the conditional mean of later prediction nodes. This avoids a dense
+new-node covariance matrix and is usually the more scalable joint prediction
+method. This option follows the observed-prediction ordering idea and
+latent-first full-conditioning construction described by Katzfuss et al.
+(2020, Sects. 3.1, 4.2, and 4.3.4), adapted to the package workflow in which
+fitted latent process draws are saved or recovered first and prediction nodes
+are then simulated sequentially conditional on those draws. The method is
+ordering dependent, as in other Vecchia/NNGP approximations.
+
 With \code{joint = TRUE, joint_method = "full"}, nearest neighbors are still
 chosen only from the fitted support, but unique new NNGP nodes are drawn
-jointly from a dense residual covariance. This can require substantial memory
-for large prediction sets.
-
-With \code{joint = TRUE, joint_method = "vecchia"}, unique new NNGP nodes are
-ordered by \code{pred_ordering}. Neighbors for each ordered prediction node are
-chosen from the combined history made of all fitted support nodes and earlier
-prediction nodes in that ordering. The prediction draw is then generated
-sequentially, so simulated earlier prediction nodes can enter the conditional
-mean of later prediction nodes. This avoids a dense new-node covariance matrix
-and is usually the more scalable joint prediction method. This option follows
-the observed-prediction ordering idea and latent-first full-conditioning
-construction described by Katzfuss et al. (2020, Sects. 3.1, 4.2, and 4.3.4),
-adapted to the package workflow in which fitted latent process draws are
-saved or recovered first and prediction nodes are then simulated sequentially
-conditional on those draws. The method is ordering dependent, as in other
-Vecchia/NNGP approximations.
+jointly from a dense residual covariance. This can be useful for small
+prediction sets but can require substantial memory for larger prediction sets.
 
 The independent, dense-joint, and Vecchia-joint approaches should have similar
 posterior means and medians for each prediction location when the neighbor
